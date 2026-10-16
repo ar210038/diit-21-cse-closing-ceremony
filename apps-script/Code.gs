@@ -1,3 +1,11 @@
+// Adds a private setup command to the Google Sheet menu.
+// Open or reload the Sheet, then use DIIT Ceremony > Initialize registration sheet.
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('DIIT Ceremony')
+    .addItem('Initialize registration sheet', 'setup_')
+    .addToUi();
+}
+
 // Google Sheets → Extensions → Apps Script. Paste as Code.gs.
 // Bind this script to the Google Sheet that will be your private admin dashboard.
 const SHEET_NAME_ = 'Registrations';
@@ -5,7 +13,7 @@ const DEADLINE_ = '2026-10-27';
 const ZONE_ = 'Asia/Dhaka';
 const HEADERS_ = ['Submitted at', 'Reference', 'Student name', 'Student ID', 'Email', 'Phone', 'Guests', 'Total (BDT)', 'Payment method', 'Transaction ID', 'Payment received', 'Status', 'Ticket token', 'Confirmed at', 'Email sent at', 'Email error'];
 
-// Run setup_ once from the Apps Script editor, authorize it, then deploy as a web app.
+// Reload the Sheet and choose DIIT Ceremony > Initialize registration sheet; authorize when prompted.
 // The setup and payment-edit methods have trailing underscores: web visitors cannot invoke them.
 function setup_() {
   const book = SpreadsheetApp.getActiveSpreadsheet();
