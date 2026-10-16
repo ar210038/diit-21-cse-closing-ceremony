@@ -52,6 +52,7 @@ function doGet(e) {
   const ticket = e && e.parameter ? clean_(e.parameter.ticket) : '';
   if (ticket) return verifyTicket_(ticket);
   return HtmlService.createHtmlOutputFromFile('Registration')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setTitle('DIIT 21st CSE Registration')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
