@@ -3,6 +3,8 @@
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('DIIT Ceremony')
     .addItem('Initialize registration sheet', 'setup_')
+    .addSeparator()
+    .addItem('Resend confirmation for selected student', 'resendConfirmationForSelectedRow_')
     .addToUi();
 }
 
@@ -11,6 +13,8 @@ function onOpen() {
 const SHEET_NAME_ = 'Registrations';
 const DEADLINE_ = '2026-10-27';
 const ZONE_ = 'Asia/Dhaka';
+// Exact public, working DIIT Workspace web-app deployment. Keep this synced with docs/config.js.
+const TICKET_VERIFICATION_BASE_URL_ = 'https://script.google.com/a/macros/diit.edu.bd/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
 const HEADERS_ = ['Submitted at', 'Reference', 'Student name', 'Student ID', 'Email', 'Phone', 'Guests', 'Total (BDT)', 'Payment method', 'Transaction ID', 'Payment received', 'Status', 'Ticket token', 'Confirmed at', 'Email sent at', 'Email error'];
 
 // Reload the Sheet and choose DIIT Ceremony > Initialize registration sheet; authorize when prompted.
@@ -118,10 +122,45 @@ function onPaymentEdited_(e) {
   } finally { lock.releaseLock(); }
 }
 
+// Private Google Sheets menu action. Use only for a confirmed student whose email needs a correction.
+// Existing QR token stays unchanged so the student retains the same ticket identity.
+function resendConfirmationForSelectedRow_() {
+  const ui = SpreadsheetApp.getUi();
+  const book = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = book && book.getActiveSheet();
+  const selected = sheet && sheet.getActiveRange();
+  if (!sheet || sheet.getName() !== SHEET_NAME_ || !selected ||
+      selected.getNumRows() !== 1 || selected.getRow() < 2) {
+    ui.alert('Select one student row in the Registrations sheet first.');
+    return;
+  }
+  const row = selected.getRow();
+  const record = sheet.getRange(row, 1, 1, HEADERS_.length).getValues()[0];
+  if (String(record[11]) !== 'CONFIRMED' || !/^[a-f0-9]{64}$/i.test(String(record[12]))) {
+    ui.alert('This student must be CONFIRMED and have a valid ticket token before resending.');
+    return;
+  }
+  const answer = ui.alert('Resend confirmation email?',
+      'Student: ' + String(record[2]) + '\\nEmail: ' + String(record[4]) +
+      '\\nThis sends a new email with the corrected ticket link and QR image.',
+      ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try {
+    sendTicketEmail_(record, String(record[12]));
+    sheet.getRange(row, 15).setValue(new Date());
+    sheet.getRange(row, 16).clearContent();
+    ui.alert('Confirmation email sent. Test both the link and QR code in a different browser.');
+  } catch (err) {
+    sheet.getRange(row, 16).setValue(String(err).slice(0, 500));
+    ui.alert('Email failed: ' + String(err));
+  } finally { lock.releaseLock(); }
+}
+
 function sendTicketEmail_(data, token) {
-  const site = ScriptApp.getService().getUrl();
-  if (!site) throw Error('Deploy the Apps Script as a web app first.');
-  const ticketUrl = site + '?ticket=' + encodeURIComponent(token);
+  // ScriptApp.getService().getUrl() may return a different, inaccessible Workspace deployment.
+  const ticketUrl = TICKET_VERIFICATION_BASE_URL_ + '?ticket=' + encodeURIComponent(token);
   const name = String(data[2]), reference = String(data[1]),
     email = String(data[4]), guests = Number(data[6]), total = Number(data[7]);
   const subject = 'DIIT 21st CSE Closing Ceremony — Registration Confirmed';
