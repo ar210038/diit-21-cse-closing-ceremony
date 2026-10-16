@@ -1,5 +1,5 @@
 // Paste the deployed Apps Script web-app URL here. No login credentials or secrets.
-window.REGISTRATION_FORM_URL = 'https://script.google.com/macros/s/AKfycbz94yeyZ74OXDBYbDhDglzOxK-e59dMgSfnFLnCP3q_sqUnwqJIeN7vLiF3XeQbwiowTQ/exec';
+window.REGISTRATION_FORM_URL = 'https://script.google.com/macros/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
 
 /* GitHub Pages cannot safely embed every Google Apps Script deployment.
    Open registration directly instead, avoiding the Google Drive iframe error. */
