@@ -19,6 +19,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const url=String(window.REGISTRATION_FORM_URL||'').trim();
   const valid=/^https:\/\/script\.google\.com\/(?:a\/macros\/diit\.edu\.bd\/s|macros\/s)\/[A-Za-z0-9_-]+\/exec$/.test(url);
   if(valid){
+    // Navbar registration always opens the same public form as the main call-to-action.
+    const navbarRegister=document.querySelector('.nav-register');
+    if(navbarRegister){
+      navbarRegister.href=url;
+      navbarRegister.target='_blank';
+      navbarRegister.rel='noopener noreferrer';
+      navbarRegister.setAttribute('aria-label','Open student registration form');
+    }
     const link=document.createElement('a');link.className='button launch-registration';link.href=url;
     link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open Secure Registration ↗';box.append(link);
     const note=document.createElement('p');note.className='form-footnote';note.textContent='The registration form opens in a new tab. Please contact the coordinator if you have trouble accessing it.';box.append(note);
