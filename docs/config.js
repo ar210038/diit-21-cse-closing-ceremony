@@ -1,5 +1,5 @@
 // Paste the deployed Apps Script web-app URL here. No login credentials or secrets.
-window.REGISTRATION_FORM_URL = 'https://script.google.com/macros/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
+window.REGISTRATION_FORM_URL = 'https://script.google.com/a/macros/diit.edu.bd/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
 
 /* GitHub Pages cannot safely embed every Google Apps Script deployment.
    Open registration directly instead, avoiding the Google Drive iframe error. */
@@ -17,11 +17,11 @@ document.addEventListener('DOMContentLoaded', () => {
   description.textContent='Complete the secure student form to receive your registration reference. After payment is verified, your QR entry ticket will be emailed.';
   box.append(description);
   const url=String(window.REGISTRATION_FORM_URL||'').trim();
-  const valid=/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url);
+  const valid=/^https:\/\/script\.google\.com\/(?:a\/macros\/diit\.edu\.bd\/s|macros\/s)\/[A-Za-z0-9_-]+\/exec$/.test(url);
   if(valid){
     const link=document.createElement('a');link.className='button launch-registration';link.href=url;
     link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open Secure Registration ↗';box.append(link);
-    const note=document.createElement('p');note.className='form-footnote';note.textContent='The form opens directly in a new tab. If it shows a Google Drive error there too, the organizer must check the Apps Script deployment.';box.append(note);
+    const note=document.createElement('p');note.className='form-footnote';note.textContent='The registration form opens in a new tab. Please contact the coordinator if you have trouble accessing it.';box.append(note);
   }else{
     const note=document.createElement('p');note.className='registration-status';
     note.textContent='Online registration is being connected. Contact the coordinator for assistance.';box.append(note);
