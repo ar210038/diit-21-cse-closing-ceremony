@@ -171,6 +171,18 @@ function resendConfirmationForSelectedRow_() {
  * Temporary Slides files are put in trash after PDF conversion.
  * New Slide/Drive permissions must be granted by the sheet owner once.
  */
+// Run once from the Apps Script editor to approve Slides/Drive permissions
+// and inspect the ticket layout. Creates only one preview PDF in your Drive,
+// with a dummy (invalid) QR token; it does not email or alter registrations.
+function testTicketPdf_() {
+  const sample = createPersonalizedTicketPdf_(
+    'Sample Participant', 'PREVIEW',
+    TICKET_VERIFICATION_BASE_URL_ + '?ticket=' + '0'.repeat(64));
+  const file = DriveApp.createFile(sample);
+  console.log('Ticket preview saved in Drive: ' + file.getUrl());
+  return file.getUrl();
+}
+
 function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
   const templateResponse = UrlFetchApp.fetch(TICKET_TEMPLATE_URL_, {muteHttpExceptions:true});
   if (templateResponse.getResponseCode() !== 200 ||
