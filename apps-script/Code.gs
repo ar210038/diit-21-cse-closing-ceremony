@@ -16,8 +16,9 @@ const DEADLINE_ = '2026-10-27';
 const ZONE_ = 'Asia/Dhaka';
 // Exact public, working DIIT Workspace web-app deployment. Keep this synced with docs/config.js.
 const TICKET_VERIFICATION_BASE_URL_ = 'https://script.google.com/a/macros/diit.edu.bd/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
-// Clean blank green-and-gold artwork hosted on GitHub Pages.
-const TICKET_TEMPLATE_URL_ = 'https://ar210038.github.io/diit-21-cse-closing-ceremony/assets/ticket-template-clean.png';
+// Google Slides ticket template: a single 3:1 slide with {{NAME}} and QR_PLACEHOLDER.
+// The script copies this presentation per ticket; it never edits the original.
+const TICKET_SLIDES_TEMPLATE_ID_ = '1sO-h3YSwKfhnlxO9s_4GUzxvAzovGWyixFmRjfI-kEk';
 
 const HEADERS_ = ['Submitted at', 'Reference', 'Student name', 'Student ID', 'Email', 'Phone', 'Guests', 'Total (BDT)', 'Payment method', 'Transaction ID', 'Payment received', 'Status', 'Ticket token', 'Confirmed at', 'Email sent at', 'Email error'];
 
@@ -165,11 +166,11 @@ function resendConfirmationForSelectedRow_() {
 
 
 /**
- * Build one personalized PDF ticket from the approved landscape PNG.
- * Google Slides renders the original design, the student's real name, and
- * the actual QR code together into a single downloadable one-page PDF.
- * Temporary Slides files are put in trash after PDF conversion.
- * New Slide/Drive permissions must be granted by the sheet owner once.
+ * Build a one-page ticket PDF from the owner's editable Google Slides template.
+ * The slide must have a {{NAME}} text placeholder and a page element whose
+ * Alt text TITLE is QR_PLACEHOLDER. QR positioning comes from that element,
+ * not hard-coded pixel coordinates. Never edit the original template.
+ * The temporary copy is deleted after exporting the PDF.
  */
 // Run once from the Apps Script editor to approve Slides/Drive permissions
 // and inspect the ticket layout. Creates only one preview PDF in your Drive,
@@ -195,81 +196,63 @@ function testTicketPdf_() {
 }
 
 function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
-  // This background contains EMPTY name and QR areas; do not add cover-up shapes.
-  const templateResponse = UrlFetchApp.fetch(TICKET_TEMPLATE_URL_, {muteHttpExceptions:true});
-  if (templateResponse.getResponseCode() !== 200 ||
-      !/image\/png/i.test(String(templateResponse.getHeaders()['Content-Type'] ||
-        templateResponse.getHeaders()['content-type'] || ''))) {
-    throw Error('Clean ticket template unavailable (HTTP ' +
-      templateResponse.getResponseCode() + '). Check TICKET_TEMPLATE_URL_.');
-  }
-  const artwork = templateResponse.getBlob().setName('diit-clean-ticket.png');
-
-  // Each confirmed student receives their own verification URL encoded in the QR.
+  // Only the name and QR are personalized. All decorative layout is maintained
+  // in the original editable Slides template.
   const qrResponse = UrlFetchApp.fetch(
     'https://quickchart.io/qr?format=png&size=800&margin=2&text=' +
-      encodeURIComponent(ticketUrl), {muteHttpExceptions:true});
+      encodeURIComponent(ticketUrl),
+    {muteHttpExceptions:true});
   if (qrResponse.getResponseCode() !== 200 ||
       !/image\/png/i.test(String(qrResponse.getHeaders()['Content-Type'] ||
         qrResponse.getHeaders()['content-type'] || ''))) {
-    throw Error('Ticket QR generation failed (HTTP ' + qrResponse.getResponseCode() + ').');
+    throw Error('Ticket QR generation failed (HTTP ' +
+      qrResponse.getResponseCode() + ').');
   }
-  const qrImage = qrResponse.getBlob().setName('ticket-qr.png');
+  const qrBlob = qrResponse.getBlob().setName('ticket-qr.png');
 
-  let presentationId = null;
+  let copyId = null;
   try {
-    const deck = SlidesApp.create('Temporary DIIT CSE21 ticket - ' + reference);
-    presentationId = deck.getId();
-    const slide = deck.appendSlide(SlidesApp.PredefinedLayout.BLANK);
-    deck.getSlides().filter(page => page.getObjectId() !== slide.getObjectId())
-      .forEach(page => page.remove());
-    slide.getBackground().setSolidFill('#073B30');
+    // makeCopy requires this account to have access to the Slides template.
+    const copy = DriveApp.getFileById(TICKET_SLIDES_TEMPLATE_ID_)
+      .makeCopy('Temporary DIIT CSE21 ticket - ' + reference);
+    copyId = copy.getId();
+    const deck = SlidesApp.openById(copyId);
+    const slides = deck.getSlides();
+    if (slides.length !== 1) {
+      throw Error('Ticket template must contain exactly one slide.');
+    }
+    const slide = slides[0];
+    const replacedNames = slide.replaceAllText('{{NAME}}', String(studentName));
+    if (replacedNames !== 1) {
+      throw Error('Ticket template must contain exactly one editable {{NAME}} placeholder. Found: ' +
+        replacedNames);
+    }
 
-    // Preserve the 3:1 artwork's aspect ratio. Slides has a wider-page margin
-    // because its default 16:9 canvas cannot be resized through SlidesApp.
-    const pageW = deck.getPageWidth();
-    const pageH = deck.getPageHeight();
-    const ticketW = Math.min(pageW * 0.98, pageH * 2.96);
-    const scale = ticketW / 2172; // Approved clean template: 2172 × 724 px.
-    const x = (pageW - ticketW) / 2;
-    const y = (pageH - 724 * scale) / 2;
-    slide.insertImage(artwork, x, y, 2172 * scale, 724 * scale);
+    // Alt text TITLE = QR_PLACEHOLDER on a shape/image. Use its exact geometry.
+    const qrPlaceholders = slide.getPageElements()
+      .filter(el => el.getTitle() === 'QR_PLACEHOLDER');
+    if (qrPlaceholders.length !== 1) {
+      throw Error('Ticket template must have exactly one element with Alt text Title ' +
+        'QR_PLACEHOLDER. Found: ' + qrPlaceholders.length);
+    }
+    const place = qrPlaceholders[0];
+    const side = Math.min(place.getWidth(), place.getHeight());
+    if (side <= 0) throw Error('QR placeholder must have a visible square area.');
+    const left = place.getLeft() + (place.getWidth() - side) / 2;
+    const top = place.getTop() + (place.getHeight() - side) / 2;
 
-    // Text is added DIRECTLY to the empty gold nameplate.
-    const nameBox = slide.insertTextBox(
-      String(studentName),
-      x + 678 * scale, y + 503 * scale,
-      876 * scale, 92 * scale);
-    nameBox.getFill().setTransparent();
-    nameBox.getBorder().setTransparent();
-    nameBox.setContentAlignment(SlidesApp.ContentAlignment.MIDDLE);
-    const nameText = nameBox.getText();
-    const characters = [...String(studentName)].length;
-    const fontSize = characters > 50 ? 11 : characters > 38 ? 13 :
-      characters > 28 ? 16 : 21;
-    nameText.getTextStyle()
-      .setFontFamily('Georgia')
-      .setFontSize(fontSize)
-      .setBold(true)
-      .setForegroundColor('#123D34');
-    nameText.getParagraphStyle()
-      .setParagraphAlignment(SlidesApp.ParagraphAlignment.CENTER);
-
-    // Center the actual QR inside the clean ticket's gold frame.
-    // The sample PDF showed that the former 1740/245 position was up-left.
-    // Artwork coordinates are based on the 2172 x 724 clean PNG.
-    slide.insertImage(qrImage,
-      x + 1794 * scale, y + 261 * scale,
-      250 * scale, 250 * scale);
-
+    place.remove();
+    slide.insertImage(qrBlob, left, top, side, side);
     deck.saveAndClose();
-    return DriveApp.getFileById(presentationId)
-      .getAs(MimeType.PDF)
+
+    return DriveApp.getFileById(copyId).getAs(MimeType.PDF)
       .setName('DIIT-CSE21-' + reference + '-Ticket.pdf');
   } finally {
-    if (presentationId) {
-      try { DriveApp.getFileById(presentationId).setTrashed(true); }
-      catch (cleanupError) { console.log('Temporary ticket cleanup: ' + cleanupError); }
+    if (copyId) {
+      try { DriveApp.getFileById(copyId).setTrashed(true); }
+      catch (cleanupError) {
+        console.log('Temporary ticket Slides cleanup failed: ' + cleanupError);
+      }
     }
   }
 }
