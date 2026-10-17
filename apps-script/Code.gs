@@ -15,6 +15,10 @@ const DEADLINE_ = '2026-10-27';
 const ZONE_ = 'Asia/Dhaka';
 // Exact public, working DIIT Workspace web-app deployment. Keep this synced with docs/config.js.
 const TICKET_VERIFICATION_BASE_URL_ = 'https://script.google.com/a/macros/diit.edu.bd/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
+ // Approved green-and-gold ticket image, hosted publicly with the GitHub Pages site.
+ // The filename really has two .png extensions in the repository.
+ const TICKET_TEMPLATE_URL_ = 'https://ar210038.github.io/diit-21-cse-closing-ceremony/assets/ticket-template.png.png';
+
 const HEADERS_ = ['Submitted at', 'Reference', 'Student name', 'Student ID', 'Email', 'Phone', 'Guests', 'Total (BDT)', 'Payment method', 'Transaction ID', 'Payment received', 'Status', 'Ticket token', 'Confirmed at', 'Email sent at', 'Email error'];
 
 // Reload the Sheet and choose DIIT Ceremony > Initialize registration sheet; authorize when prompted.
@@ -159,6 +163,83 @@ function resendConfirmationForSelectedRow_() {
   } finally { lock.releaseLock(); }
 }
 
+
+/**
+ * Build one personalized PDF ticket from the approved landscape PNG.
+ * Google Slides renders the original design, the student's real name, and
+ * the actual QR code together into a single downloadable one-page PDF.
+ * Temporary Slides files are put in trash after PDF conversion.
+ * New Slide/Drive permissions must be granted by the sheet owner once.
+ */
+function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
+  const templateResponse = UrlFetchApp.fetch(TICKET_TEMPLATE_URL_, {muteHttpExceptions:true});
+  if (templateResponse.getResponseCode() !== 200 ||
+      !/image\/png/i.test(String(templateResponse.getHeaders()['Content-Type'] ||
+        templateResponse.getHeaders()['content-type'] || ''))) {
+    throw Error('Ticket artwork unavailable. Verify TICKET_TEMPLATE_URL_ is public (HTTP ' +
+      templateResponse.getResponseCode() + ').');
+  }
+  const artwork = templateResponse.getBlob().setName('diit-ticket-artwork.png');
+
+  const qrResponse = UrlFetchApp.fetch(
+    'https://quickchart.io/qr?format=png&size=800&margin=2&text=' + encodeURIComponent(ticketUrl),
+    {muteHttpExceptions:true});
+  if (qrResponse.getResponseCode() !== 200 ||
+      !/image\/png/i.test(String(qrResponse.getHeaders()['Content-Type'] ||
+        qrResponse.getHeaders()['content-type'] || ''))) {
+    throw Error('Ticket QR generation failed (HTTP ' + qrResponse.getResponseCode() + '). Retry later.');
+  }
+  const qrImage = qrResponse.getBlob().setName('ticket-qr.png');
+
+  let presentationId = null;
+  try {
+    const deck = SlidesApp.create('Temporary DIIT CSE21 ticket - ' + reference);
+    presentationId = deck.getId();
+    // Default Slides canvas is 16:9. Center the complete 3:1 ticket image
+    // without stretching/cropping its approved artwork or QR placement.
+    const initialSlides = deck.getSlides();
+    const slide = deck.appendSlide(SlidesApp.PredefinedLayout.BLANK);
+    initialSlides.forEach(oldSlide => oldSlide.remove());
+    slide.getBackground().setSolidFill('#073B30');
+
+    const pageW = deck.getPageWidth(), pageH = deck.getPageHeight();
+    const ticketW = Math.min(pageW * 0.98, pageH * 2.96);
+    const scale = ticketW / 2172; // Approved artwork: 2172 × 724 pixels.
+    const x = (pageW - ticketW) / 2;
+    const y = (pageH - 724 * scale) / 2;
+    slide.insertImage(artwork, x, y, 2172 * scale, 724 * scale);
+
+    // Cover ONLY the printed sample name inside its ornamental frame.
+    // Preserve the decorative gold outline, DIIT logo and ceremony title.
+    const namePlate = slide.insertShape(SlidesApp.ShapeType.RECTANGLE,
+      x + 674 * scale, y + 491 * scale, 816 * scale, 88 * scale);
+    namePlate.getFill().setSolidFill('#FBF5E9');
+    namePlate.getBorder().setTransparent();
+    namePlate.setContentAlignment(SlidesApp.ContentAlignment.MIDDLE);
+    const nameText = namePlate.getText();
+    nameText.setText(String(studentName));
+    const count = [...String(studentName)].length;
+    const fontSize = count > 46 ? 10 : count > 34 ? 12 : count > 25 ? 15 : 18;
+    nameText.getTextStyle().setFontFamily('Georgia').setFontSize(fontSize)
+      .setBold(true).setForegroundColor('#0B2F26');
+    nameText.getParagraphStyle().setParagraphAlignment(SlidesApp.ParagraphAlignment.CENTER);
+
+    // Place the REAL QR over the decorative placeholder, inside the gold frame.
+    // This image is embedded into the PDF, not linked to a third-party website.
+    slide.insertImage(qrImage,
+      x + 1683 * scale, y + 237 * scale, 249 * scale, 249 * scale);
+    deck.saveAndClose();
+
+    return DriveApp.getFileById(presentationId).getAs(MimeType.PDF)
+      .setName('DIIT-CSE21-' + reference + '-Ticket.pdf');
+  } finally {
+    if (presentationId) {
+      try { DriveApp.getFileById(presentationId).setTrashed(true); }
+      catch (cleanupError) { console.log('Temporary ticket slide cleanup: ' + cleanupError); }
+    }
+  }
+}
+
 function sendTicketEmail_(data, token) {
   // ScriptApp.getService().getUrl() may return a different, inaccessible Workspace deployment.
   const ticketUrl = TICKET_VERIFICATION_BASE_URL_ + '?ticket=' + encodeURIComponent(token);
@@ -176,19 +257,14 @@ function sendTicketEmail_(data, token) {
     '<br><b>Guests:</b> ' + guests + '<br><b>Total paid:</b> BDT ' + total +
     '</p><p><b>Venue:</b> <a href="https://greengarden.com.bd/">Green Garden</a><br>' +
     '<b>Date:</b> To be announced after the final defence.</p>' +
-    '<p>Show your QR ticket at entry. <a href="' + escape_(ticketUrl) +
+    '<p>Your personalized ceremony entry ticket is attached as a PDF. Show its QR code at entry. <a href="' + escape_(ticketUrl) +
     '">Open your digital ticket</a>.</p>' +
     '<p>Contact: Al-Rafi Chowdhury · 01940372926</p></div>';
-  const options = {to:email, subject:subject, body:plain, htmlBody:html};
-  // The QR service sees only an unguessable ticket URL (never student contact fields).
-  // If the third-party QR provider fails, send the working verification link instead.
-  try {
-    const qr = UrlFetchApp.fetch('https://quickchart.io/qr?size=280&text=' +
-      encodeURIComponent(ticketUrl), {muteHttpExceptions:true});
-    if (qr.getResponseCode() === 200 &&
-        String(qr.getHeaders()['Content-Type'] || qr.getHeaders()['content-type'] || '').indexOf('image/') === 0)
-      options.attachments = [qr.getBlob().setName('DIIT-CSE21-ticket.png')];
-  } catch (err) { console.log('QR image unavailable; email includes ticket link: ' + err); }
+  // A successful email now carries the personalized, scannable PDF instead of a bare QR PNG.
+  // A generation failure propagates to column P, so the organizer can retry safely.
+  const ticketPdf = createPersonalizedTicketPdf_(name, reference, ticketUrl);
+  const options = {to:email, subject:subject, body:plain, htmlBody:html,
+    attachments:[ticketPdf]};
   MailApp.sendEmail(options);
 }
 
