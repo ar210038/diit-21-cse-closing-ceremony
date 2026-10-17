@@ -4,6 +4,7 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('DIIT Ceremony')
     .addItem('Initialize registration sheet', 'setup_')
     .addSeparator()
+    .addItem('Preview sample ticket PDF', 'testTicketPdf_')
     .addItem('Resend confirmation for selected student', 'resendConfirmationForSelectedRow_')
     .addToUi();
 }
@@ -179,8 +180,19 @@ function testTicketPdf_() {
     'Sample Participant', 'PREVIEW',
     TICKET_VERIFICATION_BASE_URL_ + '?ticket=' + '0'.repeat(64));
   const file = DriveApp.createFile(sample);
-  console.log('Ticket preview saved in Drive: ' + file.getUrl());
-  return file.getUrl();
+  const url = file.getUrl();
+  console.log('Ticket preview saved in Drive: ' + url);
+  // Safe to use from the private Google Sheets menu; keep this function private.
+  SpreadsheetApp.getUi().showModalDialog(
+    HtmlService.createHtmlOutput(
+      '<div style="font:15px Arial,sans-serif;padding:16px;line-height:1.6">' +
+      '<p>Your sample ceremony ticket PDF was saved to Google Drive.</p>' +
+      '<p><a href="' + escape_(url) + '" target="_blank" rel="noopener noreferrer">' +
+      'Open ticket preview PDF ↗</a></p></div>'
+    ).setWidth(430).setHeight(175),
+    'Ticket preview ready'
+  );
+  return url;
 }
 
 function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
