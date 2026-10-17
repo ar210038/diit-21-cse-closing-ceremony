@@ -212,11 +212,47 @@ function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
 
   let copyId = null;
   try {
-    // makeCopy requires this account to have access to the Slides template.
-    const copy = DriveApp.getFileById(TICKET_SLIDES_TEMPLATE_ID_)
-      .makeCopy('Temporary DIIT CSE21 ticket - ' + reference);
+    // Diagnose access to the ORIGINAL template separately from opening its copy.
+    // A Sheet owner and a Slides owner can be different Google accounts.
+    let template;
+    try {
+      template = DriveApp.getFileById(TICKET_SLIDES_TEMPLATE_ID_);
+      if (template.getMimeType() !== MimeType.GOOGLE_SLIDES) {
+        throw Error('The template ID does not refer to a Google Slides presentation.');
+      }
+    } catch (err) {
+      throw Error('Cannot access the Google Slides ticket template. Share the template ' +
+        'with the Google account running this registration Sheet (Editor access), ' +
+        'or make a copy in that account and update TICKET_SLIDES_TEMPLATE_ID_. ' +
+        'Original error: ' + err);
+    }
+
+    let copy;
+    try {
+      copy = template.makeCopy('Temporary DIIT CSE21 ticket - ' + reference);
+    } catch (err) {
+      throw Error('The ticket template was found, but Apps Script could not copy it. ' +
+        'Check that copying is allowed and your account has sufficient access. ' +
+        'Original error: ' + err);
+    }
     copyId = copy.getId();
-    const deck = SlidesApp.openById(copyId);
+
+    // Google may take a few seconds to index a newly copied presentation.
+    let deck = null, openError = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        deck = SlidesApp.openById(copyId);
+        break;
+      } catch (err) {
+        openError = err;
+        if (attempt < 3) Utilities.sleep(1500);
+      }
+    }
+    if (!deck) {
+      throw Error('A temporary copy was created, but Google Slides could not open it. ' +
+        'Check that Google Slides is enabled for this account. ' +
+        'Original error: ' + openError);
+    }
     const slides = deck.getSlides();
     if (slides.length !== 1) {
       throw Error('Ticket template must contain exactly one slide.');
