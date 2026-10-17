@@ -255,9 +255,11 @@ function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
     nameText.getParagraphStyle()
       .setParagraphAlignment(SlidesApp.ParagraphAlignment.CENTER);
 
-    // The real QR goes DIRECTLY into the blank gold QR frame on the right.
+    // Center the actual QR inside the clean ticket's gold frame.
+    // The sample PDF showed that the former 1740/245 position was up-left.
+    // Artwork coordinates are based on the 2172 x 724 clean PNG.
     slide.insertImage(qrImage,
-      x + 1740 * scale, y + 245 * scale,
+      x + 1794 * scale, y + 261 * scale,
       250 * scale, 250 * scale);
 
     deck.saveAndClose();
