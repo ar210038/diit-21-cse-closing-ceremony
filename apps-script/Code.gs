@@ -226,8 +226,13 @@ function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
 
     // Place the REAL QR over the decorative placeholder, inside the gold frame.
     // This image is embedded into the PDF, not linked to a third-party website.
+    // Mask the sample QR completely before putting the real QR within the frame.
+    const qrMask = slide.insertShape(SlidesApp.ShapeType.RECTANGLE,
+      x + 1730 * scale, y + 234 * scale, 283 * scale, 283 * scale);
+    qrMask.getFill().setSolidFill('#FFFDFC');
+    qrMask.getBorder().setTransparent();
     slide.insertImage(qrImage,
-      x + 1683 * scale, y + 237 * scale, 249 * scale, 249 * scale);
+      x + 1750 * scale, y + 254 * scale, 243 * scale, 243 * scale);
     deck.saveAndClose();
 
     return DriveApp.getFileById(presentationId).getAs(MimeType.PDF)
