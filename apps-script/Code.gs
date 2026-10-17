@@ -16,9 +16,8 @@ const DEADLINE_ = '2026-10-27';
 const ZONE_ = 'Asia/Dhaka';
 // Exact public, working DIIT Workspace web-app deployment. Keep this synced with docs/config.js.
 const TICKET_VERIFICATION_BASE_URL_ = 'https://script.google.com/a/macros/diit.edu.bd/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
- // Approved green-and-gold ticket image, hosted publicly with the GitHub Pages site.
- // The filename really has two .png extensions in the repository.
- const TICKET_TEMPLATE_URL_ = 'https://ar210038.github.io/diit-21-cse-closing-ceremony/assets/ticket-template.png.png';
+// Clean blank green-and-gold artwork hosted on GitHub Pages.
+const TICKET_TEMPLATE_URL_ = 'https://ar210038.github.io/diit-21-cse-closing-ceremony/assets/ticket-template-clean.png';
 
 const HEADERS_ = ['Submitted at', 'Reference', 'Student name', 'Student ID', 'Email', 'Phone', 'Guests', 'Total (BDT)', 'Payment method', 'Transaction ID', 'Payment received', 'Status', 'Ticket token', 'Confirmed at', 'Email sent at', 'Email error'];
 
@@ -148,7 +147,7 @@ function resendConfirmationForSelectedRow_() {
   }
   const answer = ui.alert('Resend confirmation email?',
       'Student: ' + String(record[2]) + '\\nEmail: ' + String(record[4]) +
-      '\\nThis sends a new email with the corrected ticket link and QR image.',
+      '\\nThis sends a new email with the personalized ticket PDF and verification link.',
       ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
   const lock = LockService.getScriptLock();
@@ -196,22 +195,24 @@ function testTicketPdf_() {
 }
 
 function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
+  // This background contains EMPTY name and QR areas; do not add cover-up shapes.
   const templateResponse = UrlFetchApp.fetch(TICKET_TEMPLATE_URL_, {muteHttpExceptions:true});
   if (templateResponse.getResponseCode() !== 200 ||
       !/image\/png/i.test(String(templateResponse.getHeaders()['Content-Type'] ||
         templateResponse.getHeaders()['content-type'] || ''))) {
-    throw Error('Ticket artwork unavailable. Verify TICKET_TEMPLATE_URL_ is public (HTTP ' +
-      templateResponse.getResponseCode() + ').');
+    throw Error('Clean ticket template unavailable (HTTP ' +
+      templateResponse.getResponseCode() + '). Check TICKET_TEMPLATE_URL_.');
   }
-  const artwork = templateResponse.getBlob().setName('diit-ticket-artwork.png');
+  const artwork = templateResponse.getBlob().setName('diit-clean-ticket.png');
 
+  // Each confirmed student receives their own verification URL encoded in the QR.
   const qrResponse = UrlFetchApp.fetch(
-    'https://quickchart.io/qr?format=png&size=800&margin=2&text=' + encodeURIComponent(ticketUrl),
-    {muteHttpExceptions:true});
+    'https://quickchart.io/qr?format=png&size=800&margin=2&text=' +
+      encodeURIComponent(ticketUrl), {muteHttpExceptions:true});
   if (qrResponse.getResponseCode() !== 200 ||
       !/image\/png/i.test(String(qrResponse.getHeaders()['Content-Type'] ||
         qrResponse.getHeaders()['content-type'] || ''))) {
-    throw Error('Ticket QR generation failed (HTTP ' + qrResponse.getResponseCode() + '). Retry later.');
+    throw Error('Ticket QR generation failed (HTTP ' + qrResponse.getResponseCode() + ').');
   }
   const qrImage = qrResponse.getBlob().setName('ticket-qr.png');
 
@@ -219,52 +220,54 @@ function createPersonalizedTicketPdf_(studentName, reference, ticketUrl) {
   try {
     const deck = SlidesApp.create('Temporary DIIT CSE21 ticket - ' + reference);
     presentationId = deck.getId();
-    // Default Slides canvas is 16:9. Center the complete 3:1 ticket image
-    // without stretching/cropping its approved artwork or QR placement.
-    const initialSlides = deck.getSlides();
     const slide = deck.appendSlide(SlidesApp.PredefinedLayout.BLANK);
-    initialSlides.forEach(oldSlide => oldSlide.remove());
+    deck.getSlides().filter(page => page.getObjectId() !== slide.getObjectId())
+      .forEach(page => page.remove());
     slide.getBackground().setSolidFill('#073B30');
 
-    const pageW = deck.getPageWidth(), pageH = deck.getPageHeight();
+    // Preserve the 3:1 artwork's aspect ratio. Slides has a wider-page margin
+    // because its default 16:9 canvas cannot be resized through SlidesApp.
+    const pageW = deck.getPageWidth();
+    const pageH = deck.getPageHeight();
     const ticketW = Math.min(pageW * 0.98, pageH * 2.96);
-    const scale = ticketW / 2172; // Approved artwork: 2172 × 724 pixels.
+    const scale = ticketW / 2172; // Approved clean template: 2172 × 724 px.
     const x = (pageW - ticketW) / 2;
     const y = (pageH - 724 * scale) / 2;
     slide.insertImage(artwork, x, y, 2172 * scale, 724 * scale);
 
-    // Cover ONLY the printed sample name inside its ornamental frame.
-    // Preserve the decorative gold outline, DIIT logo and ceremony title.
-    const namePlate = slide.insertShape(SlidesApp.ShapeType.RECTANGLE,
-      x + 674 * scale, y + 491 * scale, 816 * scale, 88 * scale);
-    namePlate.getFill().setSolidFill('#FBF5E9');
-    namePlate.getBorder().setTransparent();
-    namePlate.setContentAlignment(SlidesApp.ContentAlignment.MIDDLE);
-    const nameText = namePlate.getText();
-    nameText.setText(String(studentName));
-    const count = [...String(studentName)].length;
-    const fontSize = count > 46 ? 10 : count > 34 ? 12 : count > 25 ? 15 : 18;
-    nameText.getTextStyle().setFontFamily('Georgia').setFontSize(fontSize)
-      .setBold(true).setForegroundColor('#0B2F26');
-    nameText.getParagraphStyle().setParagraphAlignment(SlidesApp.ParagraphAlignment.CENTER);
+    // Text is added DIRECTLY to the empty gold nameplate.
+    const nameBox = slide.insertTextBox(
+      String(studentName),
+      x + 678 * scale, y + 503 * scale,
+      876 * scale, 92 * scale);
+    nameBox.getFill().setTransparent();
+    nameBox.getBorder().setTransparent();
+    nameBox.setContentAlignment(SlidesApp.ContentAlignment.MIDDLE);
+    const nameText = nameBox.getText();
+    const characters = [...String(studentName)].length;
+    const fontSize = characters > 50 ? 11 : characters > 38 ? 13 :
+      characters > 28 ? 16 : 21;
+    nameText.getTextStyle()
+      .setFontFamily('Georgia')
+      .setFontSize(fontSize)
+      .setBold(true)
+      .setForegroundColor('#123D34');
+    nameText.getParagraphStyle()
+      .setParagraphAlignment(SlidesApp.ParagraphAlignment.CENTER);
 
-    // Place the REAL QR over the decorative placeholder, inside the gold frame.
-    // This image is embedded into the PDF, not linked to a third-party website.
-    // Mask the sample QR completely before putting the real QR within the frame.
-    const qrMask = slide.insertShape(SlidesApp.ShapeType.RECTANGLE,
-      x + 1730 * scale, y + 234 * scale, 283 * scale, 283 * scale);
-    qrMask.getFill().setSolidFill('#FFFDFC');
-    qrMask.getBorder().setTransparent();
+    // The real QR goes DIRECTLY into the blank gold QR frame on the right.
     slide.insertImage(qrImage,
-      x + 1750 * scale, y + 254 * scale, 243 * scale, 243 * scale);
-    deck.saveAndClose();
+      x + 1740 * scale, y + 245 * scale,
+      250 * scale, 250 * scale);
 
-    return DriveApp.getFileById(presentationId).getAs(MimeType.PDF)
+    deck.saveAndClose();
+    return DriveApp.getFileById(presentationId)
+      .getAs(MimeType.PDF)
       .setName('DIIT-CSE21-' + reference + '-Ticket.pdf');
   } finally {
     if (presentationId) {
       try { DriveApp.getFileById(presentationId).setTrashed(true); }
-      catch (cleanupError) { console.log('Temporary ticket slide cleanup: ' + cleanupError); }
+      catch (cleanupError) { console.log('Temporary ticket cleanup: ' + cleanupError); }
     }
   }
 }
