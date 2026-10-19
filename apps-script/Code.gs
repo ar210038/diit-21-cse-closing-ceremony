@@ -4,6 +4,7 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('DIIT Ceremony')
     .addItem('Initialize registration sheet', 'setup_')
     .addSeparator()
+    .addItem('Confirm payment for selected student', 'confirmPaymentForSelectedRow_')
     .addItem('Preview sample ticket PDF', 'testTicketPdf_')
     .addItem('Resend confirmation for selected student', 'resendConfirmationForSelectedRow_')
     .addToUi();
@@ -23,7 +24,7 @@ const TICKET_SLIDES_TEMPLATE_ID_ = '1sO-h3YSwKfhnlxO9s_4GUzxvAzovGWyixFmRjfI-kEk
 const HEADERS_ = ['Submitted at', 'Reference', 'Student name', 'Student ID', 'Email', 'Phone', 'Guests', 'Total (BDT)', 'Payment method', 'Transaction ID', 'Payment received', 'Status', 'Ticket token', 'Confirmed at', 'Email sent at', 'Email error'];
 
 // Reload the Sheet and choose DIIT Ceremony > Initialize registration sheet; authorize when prompted.
-// The setup and payment-edit methods have trailing underscores: web visitors cannot invoke them.
+// Sheet-only payment methods end with underscores: public registration visitors cannot invoke them.
 function setup_() {
   const book = SpreadsheetApp.getActiveSpreadsheet();
   if (!book) throw Error('Create this script using Extensions > Apps Script from a Google Sheet.');
@@ -97,35 +98,121 @@ function submitRegistration(form) {
   } finally { lock.releaseLock(); }
 }
 
-// Installable on-edit trigger, created by setup_. Only spreadsheet editors can tick Payment received.
+// The installable on-edit trigger is deliberately NOT a payment approval action.
+// Google Sheets does not support a reliable blocking Yes/No dialog BEFORE a checkbox
+// edit. Revert direct checkbox edits, including pasted multi-cell ranges.
+// Use DIIT Ceremony > Confirm payment for selected student instead.
 function onPaymentEdited_(e) {
   if (!e || !e.range || !e.source) return;
   const sheet = e.range.getSheet();
-  if (sheet.getName() !== SHEET_NAME_ || e.range.getColumn() !== 11 ||
-      e.range.getRow() < 2 || e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1 ||
-      e.range.getValue() !== true) return;
+  if (sheet.getName() !== SHEET_NAME_) return;
+  const firstCol = e.range.getColumn();
+  const lastCol = firstCol + e.range.getNumColumns() - 1;
+  if (firstCol > 11 || lastCol < 11) return;
+  const firstRow = Math.max(2, e.range.getRow());
+  const lastRow = e.range.getRow() + e.range.getNumRows() - 1;
+  if (firstRow > lastRow) return;
+
   const lock = LockService.getScriptLock();
   lock.waitLock(25000);
   try {
-    const row = e.range.getRow(), data = sheet.getRange(row, 1, 1, 16).getValues()[0];
-    if (String(data[14]).trim()) return; // Already emailed; don't resend accidentally.
-    let token = clean_(data[12]);
-    if (!token) {
-      token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
-      sheet.getRange(row, 13).setValue(token);
-    }
-    sheet.getRange(row, 12).setValue('CONFIRMED');
-    if (!data[13]) sheet.getRange(row, 14).setValue(new Date());
+    const records = sheet.getRange(firstRow, 11, lastRow - firstRow + 1, 4)
+      .getValues(); // K: Payment received, L: status, M: token, N: confirmed at
+    records.forEach((values, offset) => {
+      const confirmed = String(values[1]) === 'CONFIRMED' &&
+        /^[a-f0-9]{64}$/i.test(String(values[2])) && Boolean(values[3]);
+      if (values[0] !== confirmed) {
+        sheet.getRange(firstRow + offset, 11).setValue(confirmed);
+      }
+    });
     SpreadsheetApp.flush();
-    try {
-      sendTicketEmail_(data, token);
-      sheet.getRange(row, 15).setValue(new Date());
-      sheet.getRange(row, 16).clearContent();
-    } catch (err) {
-      sheet.getRange(row, 16).setValue(String(err).slice(0, 500));
-      // Payment remains confirmed; uncheck and recheck the payment box to retry failed email.
+    e.source.toast(
+      'Checkbox edits do not approve payments. Select a student row, then use DIIT Ceremony > Confirm payment for selected student.',
+      'Payment safety', 8);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Private Sheet menu command, never callable by a public registration visitor.
+// The payment checkbox, status and email change ONLY after the organizer clicks Yes.
+function confirmPaymentForSelectedRow_() {
+  const ui = SpreadsheetApp.getUi();
+  const book = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = book && book.getActiveSheet();
+  const selected = sheet && sheet.getActiveRange();
+  if (!sheet || sheet.getName() !== SHEET_NAME_ || !selected ||
+      selected.getNumRows() !== 1 || selected.getRow() < 2) {
+    ui.alert('Select one student row in the Registrations sheet first.');
+    return;
+  }
+
+  const row = selected.getRow();
+  const data = sheet.getRange(row, 1, 1, HEADERS_.length).getValues()[0];
+  if (String(data[11]) === 'CONFIRMED' || Boolean(data[14])) {
+    ui.alert('This registration is already confirmed or an email was already sent. Use the separate resend option if needed.');
+    return;
+  }
+  if (String(data[11]) !== 'PENDING' || data[10] === true) {
+    ui.alert('This registration is not in a normal pending state. Check columns K–P before proceeding.');
+    return;
+  }
+
+  const details = [
+    'Student: ' + String(data[2]),
+    'Student ID: ' + String(data[3]),
+    'Reference: ' + String(data[1]),
+    'Email: ' + String(data[4]),
+    'Amount: BDT ' + String(data[7]),
+    'Payment method: ' + String(data[8]),
+    'Transaction ID: ' + (String(data[9] || '') || '(none)'),
+    '',
+    'Have you VERIFIED receiving the correct payment?',
+    'YES will tick Payment received, confirm the student and email the PDF ticket.',
+    'NO will leave everything unchanged.'
+  ].join('\n');
+  const answer = ui.alert('Confirm payment and send ticket?', details, ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  let emailError = '';
+  try {
+    // Re-check after the dialog: the sheet might have changed while it was open.
+    const current = sheet.getRange(row, 1, 1, HEADERS_.length).getValues()[0];
+    if (String(current[1]) !== String(data[1]) ||
+        String(current[11]) !== 'PENDING' ||
+        current[10] === true || Boolean(current[14])) {
+      ui.alert('The selected registration changed or has already been processed. No email was sent. Refresh and check this row.');
+      return;
     }
-  } finally { lock.releaseLock(); }
+    const token = clean_(current[12]) ||
+      Utilities.getUuid().replace(/-/g, '') +
+      Utilities.getUuid().replace(/-/g, '');
+    sheet.getRange(row, 13).setValue(token);        // M: unique ticket token
+    sheet.getRange(row, 14).setValue(new Date());    // N: confirmed at
+    sheet.getRange(row, 12).setValue('CONFIRMED');   // L: status
+    sheet.getRange(row, 11).setValue(true);          // K: payment received
+    sheet.getRange(row, 16).clearContent();         // P: clear previous email error
+    SpreadsheetApp.flush();
+
+    // Script edits do not fire onEdit triggers. Email is sent exactly once here.
+    try {
+      sendTicketEmail_(current, token);
+      sheet.getRange(row, 15).setValue(new Date()); // O: email sent at
+    } catch (err) {
+      emailError = String(err).slice(0, 500);
+      sheet.getRange(row, 16).setValue(emailError); // P: email error
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  if (emailError) {
+    ui.alert('Payment CONFIRMED, but the ticket email failed.\n\n' + emailError +
+      '\n\nCheck column P, then use DIIT Ceremony > Resend confirmation for selected student.');
+  } else {
+    ui.alert('Payment confirmed. The checkbox is checked, status is CONFIRMED, and the ticket email was sent. Check column O.');
+  }
 }
 
 // Private Google Sheets menu action. Use only for a confirmed student whose email needs a correction.
