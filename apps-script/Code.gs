@@ -3,6 +3,7 @@
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('DIIT Ceremony')
     .addItem('Initialize registration sheet', 'setup_')
+    .addItem('Create / refresh registration totals', 'refreshRegistrationTotals_')
     .addSeparator()
     .addItem('Confirm payment for selected student', 'confirmPaymentForSelectedRow_')
     .addItem('Preview sample ticket PDF', 'testTicketPdf_')
@@ -38,7 +39,102 @@ function setup_() {
   sheet.setColumnWidth(12, 145);
   const existing = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'onPaymentEdited_');
   if (!existing.length) ScriptApp.newTrigger('onPaymentEdited_').forSpreadsheet(book).onEdit().create();
-  return 'Ready: only trusted editors should have access to this Google Sheet.';
+  ensureRegistrationTotals_(sheet);
+  return 'Ready: registration summary is visible below the students. Keep the sheet restricted to trusted editors.';
+}
+
+// A four-row, formula-driven summary sits immediately AFTER the last registration.
+// Row 1 of the summary contains guests in G and total expected fees in H.
+// Later rows contain received fees, outstanding fees, and student count.
+// A marker in column A lets submissions insert ABOVE it instead of overwriting it.
+const REGISTRATION_TOTALS_MARKER_ = 'REGISTRATION SUMMARY';
+const REGISTRATION_TOTALS_ROWS_ = 4;
+
+function registrationTotalsRow_(sheet) {
+  const last = sheet.getLastRow();
+  if (last < 2) return null;
+  const columnA = sheet.getRange(2, 1, last - 1, 1).getDisplayValues();
+  for (let i = columnA.length - 1; i >= 0; i--) {
+    if (String(columnA[i][0]).trim() === REGISTRATION_TOTALS_MARKER_) {
+      return i + 2;
+    }
+  }
+  return null;
+}
+
+function ensureRegistrationTotals_(sheet) {
+  let summaryRow = registrationTotalsRow_(sheet);
+  if (summaryRow === null) {
+    // Existing student rows stay where they are; create the totals after them.
+    summaryRow = sheet.getLastRow() + 1;
+    const requiredRows = summaryRow + REGISTRATION_TOTALS_ROWS_ - 1;
+    if (requiredRows > sheet.getMaxRows()) {
+      sheet.insertRowsAfter(sheet.getMaxRows(), requiredRows - sheet.getMaxRows());
+    }
+    sheet.getRange(summaryRow, 1).setValue(REGISTRATION_TOTALS_MARKER_);
+  }
+  updateRegistrationTotals_(sheet, summaryRow);
+  return summaryRow;
+}
+
+function updateRegistrationTotals_(sheet, summaryRow) {
+  const dataEnd = summaryRow - 1;
+  // With no registrations yet, avoid self-referencing or reversed ranges.
+  const guestTotal = dataEnd < 2 ? '=0' :
+    '=SUM(G2:G' + dataEnd + ')';
+  const feeTotal = dataEnd < 2 ? '=0' :
+    '=SUM(H2:H' + dataEnd + ')';
+  const received = dataEnd < 2 ? '=0' :
+    '=SUMIFS(H2:H' + dataEnd + ',K2:K' + dataEnd +
+      ',TRUE,L2:L' + dataEnd + ',"CONFIRMED")';
+  const studentCount = dataEnd < 2 ? '=0' :
+    '=COUNTIF(D2:D' + dataEnd + ',"<>")';
+
+  sheet.getRange(summaryRow, 1).setValue(REGISTRATION_TOTALS_MARKER_);
+  sheet.getRange(summaryRow, 6).setValue('TOTAL');
+  sheet.getRange(summaryRow, 7).setFormula(guestTotal);
+  sheet.getRange(summaryRow, 8).setFormula(feeTotal);
+  sheet.getRange(summaryRow + 1, 6).setValue('Amount received');
+  sheet.getRange(summaryRow + 1, 8).setFormula(received);
+  sheet.getRange(summaryRow + 2, 6).setValue('Amount pending');
+  sheet.getRange(summaryRow + 2, 8)
+    .setFormula('=H' + summaryRow + '-H' + (summaryRow + 1));
+  sheet.getRange(summaryRow + 3, 6).setValue('Students registered');
+  sheet.getRange(summaryRow + 3, 8).setFormula(studentCount);
+
+  // The totals are displayed in the existing Guests (G) / Amount (H)
+  // columns, while labels sit in F (Phone) and A (summary title).
+  sheet.getRange(summaryRow, 1, REGISTRATION_TOTALS_ROWS_, HEADERS_.length)
+    .setBackground('#eaf2ed').setFontColor('#123d34');
+  sheet.getRange(summaryRow, 1, 1, HEADERS_.length)
+    .setBackground('#123d34').setFontColor('#ffffff').setFontWeight('bold');
+  sheet.getRange(summaryRow + 1, 6, 3, 3).setFontWeight('bold');
+  sheet.getRange(summaryRow, 7).setNumberFormat('#,##0');
+  sheet.getRange(summaryRow, 8, 3, 1).setNumberFormat('"৳"#,##0');
+  sheet.getRange(summaryRow + 3, 8).setNumberFormat('#,##0');
+  sheet.setColumnWidth(6, Math.max(sheet.getColumnWidth(6), 175));
+  sheet.getRange(summaryRow, 7).setNote('Total guests across all registrations.');
+  sheet.getRange(summaryRow, 8).setNote('Expected amount: student fees plus guest fees.');
+  sheet.getRange(summaryRow + 1, 8).setNote('Received amount: only confirmed payments with Payment received checked.');
+  sheet.getRange(summaryRow + 2, 8).setNote('Outstanding amount = expected amount minus received amount.');
+  sheet.getRange(summaryRow + 3, 8).setNote('Number of registrations with a student ID.');
+}
+
+// Run once after copying new Code.gs; safe to run again without duplicating totals.
+// Does not alter the payment verification or email process.
+function refreshRegistrationTotals_() {
+  const sheet = registrations_();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try {
+    const row = ensureRegistrationTotals_(sheet);
+    SpreadsheetApp.flush();
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Guests, expected fees, received fees, pending fees and student count are shown at row ' + row + '.',
+      'Registration totals', 7);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function registrations_() {
@@ -83,16 +179,24 @@ function submitRegistration(form) {
   lock.waitLock(25000);
   try {
     const sheet = registrations_();
-    const last = sheet.getLastRow();
-    if (last > 1 && sheet.getRange(2, 4, last - 1, 1).getDisplayValues()
-        .some(row => row[0].toLowerCase() === studentId.toLowerCase())) {
+    const totalsRow = ensureRegistrationTotals_(sheet);
+    const lastStudentRow = totalsRow - 1;
+    if (lastStudentRow > 1 &&
+        sheet.getRange(2, 4, lastStudentRow - 1, 1).getDisplayValues()
+          .some(row => row[0].toLowerCase() === studentId.toLowerCase())) {
       throw Error('This student ID is already registered. Contact the organizer if you need changes.');
     }
     const reference = 'CSE21-' + Utilities.getUuid().replace(/-/g, '').substring(0, 10).toUpperCase();
     const total = 1000 + guests * 500;
-    sheet.appendRow([new Date(), reference, name, studentId, email, phone, guests, total,
-      method, txn, false, 'PENDING', '', '', '', '']);
-    sheet.getRange(sheet.getLastRow(), 11).insertCheckboxes();
+    // Always insert BEFORE the footer. appendRow() would place a student after it.
+    sheet.insertRowsBefore(totalsRow, 1);
+    sheet.getRange(totalsRow, 1, 1, HEADERS_.length).setValues([[
+      new Date(), reference, name, studentId, email, phone, guests, total,
+      method, txn, false, 'PENDING', '', '', '', ''
+    ]]);
+    sheet.getRange(totalsRow, 11).insertCheckboxes();
+    // Rebuild formula ranges so the newly inserted student is included.
+    updateRegistrationTotals_(sheet, totalsRow + 1);
     SpreadsheetApp.flush();
     return {reference:reference, amount:total, status:'PENDING'};
   } finally { lock.releaseLock(); }
