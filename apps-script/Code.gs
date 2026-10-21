@@ -113,8 +113,8 @@ function ensureRegistrationTotals_(sheet) {
   const table = sheet.getRange(row, 6, REGISTRATION_TOTALS_ROWS_, 3);
   table.clearContent().clearFormat();
   table.getCell(1, 1).setValue(REGISTRATION_TOTALS_MARKER_);
-  table.getRange(1, 1, 1, 3).merge(); // heading F:H
-  table.getRange(2, 1, 5, 2).mergeAcross(); // labels F:G
+  sheet.getRange(row, 6, 1, 3).merge(); // heading F:H
+  sheet.getRange(row + 1, 6, 5, 2).mergeAcross(); // labels F:G
   updateRegistrationTotals_(sheet, row);
   return row;
 }
