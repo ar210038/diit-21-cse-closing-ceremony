@@ -43,85 +43,130 @@ function setup_() {
   return 'Ready: registration summary is visible below the students. Keep the sheet restricted to trusted editors.';
 }
 
-// A four-row, formula-driven summary sits immediately AFTER the last registration.
-// Row 1 of the summary contains guests in G and total expected fees in H.
-// Later rows contain received fees, outstanding fees, and student count.
-// A marker in column A lets submissions insert ABOVE it instead of overwriting it.
+// Compact, movable totals table. Keep one blank row between registration data
+// and the totals. F:H is used for labels and values; no full-width dark rows.
 const REGISTRATION_TOTALS_MARKER_ = 'REGISTRATION SUMMARY';
-const REGISTRATION_TOTALS_ROWS_ = 4;
+const REGISTRATION_TOTALS_ROWS_ = 6;
 
+// New summary marker is in column F; old, full-width summary marker is in A.
 function registrationTotalsRow_(sheet) {
   const last = sheet.getLastRow();
   if (last < 2) return null;
-  const columnA = sheet.getRange(2, 1, last - 1, 1).getDisplayValues();
-  for (let i = columnA.length - 1; i >= 0; i--) {
-    if (String(columnA[i][0]).trim() === REGISTRATION_TOTALS_MARKER_) {
-      return i + 2;
-    }
+  const colF = sheet.getRange(2, 6, last - 1, 1).getDisplayValues();
+  for (let i = colF.length - 1; i >= 0; i--) {
+    if (String(colF[i][0]).trim() === REGISTRATION_TOTALS_MARKER_) return i + 2;
   }
   return null;
 }
 
-function ensureRegistrationTotals_(sheet) {
-  let summaryRow = registrationTotalsRow_(sheet);
-  if (summaryRow === null) {
-    // Existing student rows stay where they are; create the totals after them.
-    summaryRow = sheet.getLastRow() + 1;
-    const requiredRows = summaryRow + REGISTRATION_TOTALS_ROWS_ - 1;
-    if (requiredRows > sheet.getMaxRows()) {
-      sheet.insertRowsAfter(sheet.getMaxRows(), requiredRows - sheet.getMaxRows());
-    }
-    sheet.getRange(summaryRow, 1).setValue(REGISTRATION_TOTALS_MARKER_);
+function legacyRegistrationTotalsRow_(sheet) {
+  const last = sheet.getLastRow();
+  if (last < 2) return null;
+  const colA = sheet.getRange(2, 1, last - 1, 1).getDisplayValues();
+  for (let i = colA.length - 1; i >= 0; i--) {
+    if (String(colA[i][0]).trim() === REGISTRATION_TOTALS_MARKER_) return i + 2;
   }
-  updateRegistrationTotals_(sheet, summaryRow);
-  return summaryRow;
+  return null;
 }
 
-function updateRegistrationTotals_(sheet, summaryRow) {
-  const dataEnd = summaryRow - 1;
-  // With no registrations yet, avoid self-referencing or reversed ranges.
-  const guestTotal = dataEnd < 2 ? '=0' :
-    '=SUM(G2:G' + dataEnd + ')';
-  const feeTotal = dataEnd < 2 ? '=0' :
-    '=SUM(H2:H' + dataEnd + ')';
-  const received = dataEnd < 2 ? '=0' :
-    '=SUMIFS(H2:H' + dataEnd + ',K2:K' + dataEnd +
-      ',TRUE,L2:L' + dataEnd + ',"CONFIRMED")';
-  const studentCount = dataEnd < 2 ? '=0' :
-    '=COUNTIF(D2:D' + dataEnd + ',"<>")';
+function normalizeRegistrationRowFormats_(sheet, lastStudentRow) {
+  // Only formatting is copied: names, IDs, checkboxes and payment data survive.
+  // The first real registration is the known, plain student-row formatting.
+  if (lastStudentRow >= 3) {
+    sheet.getRange(2, 1, 1, HEADERS_.length)
+      .copyFormatToRange(sheet, 1, HEADERS_.length, 2, lastStudentRow);
+  } else if (lastStudentRow === 2) {
+    sheet.getRange(2, 1, 1, HEADERS_.length)
+      .setBackground('#ffffff').setFontColor('#222222').setFontWeight('normal');
+  }
+}
 
-  sheet.getRange(summaryRow, 1).setValue(REGISTRATION_TOTALS_MARKER_);
-  sheet.getRange(summaryRow, 6).setValue('TOTAL');
-  sheet.getRange(summaryRow, 7).setFormula(guestTotal);
-  sheet.getRange(summaryRow, 8).setFormula(feeTotal);
-  sheet.getRange(summaryRow + 1, 6).setValue('Amount received');
-  sheet.getRange(summaryRow + 1, 8).setFormula(received);
-  sheet.getRange(summaryRow + 2, 6).setValue('Amount pending');
-  sheet.getRange(summaryRow + 2, 8)
-    .setFormula('=H' + summaryRow + '-H' + (summaryRow + 1));
-  sheet.getRange(summaryRow + 3, 6).setValue('Students registered');
-  sheet.getRange(summaryRow + 3, 8).setFormula(studentCount);
+function ensureRegistrationTotals_(sheet) {
+  let row = registrationTotalsRow_(sheet);
+  if (row !== null) {
+    updateRegistrationTotals_(sheet, row);
+    return row;
+  }
 
-  // The totals are displayed in the existing Guests (G) / Amount (H)
-  // columns, while labels sit in F (Phone) and A (summary title).
-  sheet.getRange(summaryRow, 1, REGISTRATION_TOTALS_ROWS_, HEADERS_.length)
-    .setBackground('#eaf2ed').setFontColor('#123d34');
-  sheet.getRange(summaryRow, 1, 1, HEADERS_.length)
+  const legacy = legacyRegistrationTotalsRow_(sheet);
+  if (legacy !== null) {
+    // Migrate the previous 4-row A:P summary to a compact 6-row F:H table.
+    // The former summary rows only contain program-generated labels/formulas.
+    sheet.getRange(legacy, 1, 4, HEADERS_.length).clearContent().clearFormat();
+    normalizeRegistrationRowFormats_(sheet, legacy - 1);
+    row = legacy + 1; // Former summary header becomes the separator row.
+  } else {
+    // A new/empty sheet: append a spacer row below the final registration.
+    row = sheet.getLastRow() + 2;
+  }
+
+  const needed = row + REGISTRATION_TOTALS_ROWS_ - 1;
+  if (needed > sheet.getMaxRows()) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), needed - sheet.getMaxRows());
+  }
+
+  // Separator row is blank and unstyled (also handles previous dark footer).
+  sheet.getRange(row - 1, 1, 1, HEADERS_.length)
+    .clearContent().clearFormat();
+
+  // Only the small 6x3 region is styled, never columns A:P.
+  const table = sheet.getRange(row, 6, REGISTRATION_TOTALS_ROWS_, 3);
+  table.clearContent().clearFormat();
+  table.getCell(1, 1).setValue(REGISTRATION_TOTALS_MARKER_);
+  table.getRange(1, 1, 1, 3).merge(); // heading F:H
+  table.getRange(2, 1, 5, 2).mergeAcross(); // labels F:G
+  updateRegistrationTotals_(sheet, row);
+  return row;
+}
+
+function updateRegistrationTotals_(sheet, row) {
+  // Last student is directly above the blank spacer row.
+  const end = row - 2;
+  const range = (col) => col + '2:' + col + end;
+  const empty = end < 2;
+
+  const totalGuests = empty ? '=0' : '=SUM(' + range('G') + ')';
+  const expected = empty ? '=0' : '=SUM(' + range('H') + ')';
+  const received = empty ? '=0' :
+    '=SUMIFS(' + range('H') + ',' + range('K') + ',TRUE,' +
+    range('L') + ',"CONFIRMED")';
+  const students = empty ? '=0' : '=COUNTIF(' + range('D') + ',"<>")';
+
+  sheet.getRange(row + 1, 6, 5, 1).setValues([
+    ['Total guests'],
+    ['Total amount'],
+    ['Amount received'],
+    ['Amount pending'],
+    ['Students registered']
+  ]);
+  sheet.getRange(row + 1, 8, 5, 1).setFormulas([
+    [totalGuests],
+    [expected],
+    [received],
+    ['=H' + (row + 2) + '-H' + (row + 3)],
+    [students]
+  ]);
+
+  const table = sheet.getRange(row, 6, REGISTRATION_TOTALS_ROWS_, 3);
+  table.setBackground('#eff5f0').setFontColor('#123d34');
+  table.setBorder(true, true, true, true, true, true, '#c5d8cd',
+    SpreadsheetApp.BorderStyle.SOLID);
+  sheet.getRange(row, 6, 1, 3)
     .setBackground('#123d34').setFontColor('#ffffff').setFontWeight('bold');
-  sheet.getRange(summaryRow + 1, 6, 3, 3).setFontWeight('bold');
-  sheet.getRange(summaryRow, 7).setNumberFormat('#,##0');
-  sheet.getRange(summaryRow, 8, 3, 1).setNumberFormat('"৳"#,##0');
-  sheet.getRange(summaryRow + 3, 8).setNumberFormat('#,##0');
-  sheet.setColumnWidth(6, Math.max(sheet.getColumnWidth(6), 175));
-  sheet.getRange(summaryRow, 7).setNote('Total guests across all registrations.');
-  sheet.getRange(summaryRow, 8).setNote('Expected amount: student fees plus guest fees.');
-  sheet.getRange(summaryRow + 1, 8).setNote('Received amount: only confirmed payments with Payment received checked.');
-  sheet.getRange(summaryRow + 2, 8).setNote('Outstanding amount = expected amount minus received amount.');
-  sheet.getRange(summaryRow + 3, 8).setNote('Number of registrations with a student ID.');
+  sheet.getRange(row + 1, 6, 5, 3).setFontWeight('normal');
+  sheet.getRange(row + 1, 8, 5, 1).setFontWeight('bold');
+  sheet.getRange(row + 1, 8, 1, 1).setNumberFormat('#,##0');
+  sheet.getRange(row + 2, 8, 3, 1).setNumberFormat('"৳"#,##0');
+  sheet.getRange(row + 5, 8).setNumberFormat('#,##0');
+  sheet.getRange(row + 1, 8, 5, 1)
+    .setHorizontalAlignment('right');
+  sheet.setColumnWidth(6, Math.max(175, sheet.getColumnWidth(6)));
+  sheet.getRange(row + 3, 8).setNote(
+    'Received = confirmed registrations with Payment received checked.');
+  sheet.getRange(row + 4, 8).setNote(
+    'Pending = total expected registration fees minus received fees.');
 }
 
-// Run once after copying new Code.gs; safe to run again without duplicating totals.
-// Does not alter the payment verification or email process.
 function refreshRegistrationTotals_() {
   const sheet = registrations_();
   const lock = LockService.getScriptLock();
@@ -130,7 +175,7 @@ function refreshRegistrationTotals_() {
     const row = ensureRegistrationTotals_(sheet);
     SpreadsheetApp.flush();
     SpreadsheetApp.getActiveSpreadsheet().toast(
-      'Guests, expected fees, received fees, pending fees and student count are shown at row ' + row + '.',
+      'Your compact registration summary is in F:H starting at row ' + row + '.',
       'Registration totals', 7);
   } finally {
     lock.releaseLock();
@@ -180,7 +225,7 @@ function submitRegistration(form) {
   try {
     const sheet = registrations_();
     const totalsRow = ensureRegistrationTotals_(sheet);
-    const lastStudentRow = totalsRow - 1;
+    const lastStudentRow = totalsRow - 2; // Row above summary is a blank spacer.
     if (lastStudentRow > 1 &&
         sheet.getRange(2, 4, lastStudentRow - 1, 1).getDisplayValues()
           .some(row => row[0].toLowerCase() === studentId.toLowerCase())) {
@@ -188,14 +233,20 @@ function submitRegistration(form) {
     }
     const reference = 'CSE21-' + Utilities.getUuid().replace(/-/g, '').substring(0, 10).toUpperCase();
     const total = 1000 + guests * 500;
-    // Always insert BEFORE the footer. appendRow() would place a student after it.
-    sheet.insertRowsBefore(totalsRow, 1);
-    sheet.getRange(totalsRow, 1, 1, HEADERS_.length).setValues([[
+    const insertAt = totalsRow - 1; // Insert ABOVE the blank separator.
+    sheet.insertRowsBefore(insertAt, 1);
+    // Newly inserted rows otherwise inherit the summary's dark green formatting.
+    if (lastStudentRow >= 2) {
+      sheet.getRange(2, 1, 1, HEADERS_.length)
+        .copyFormatToRange(sheet, 1, HEADERS_.length, insertAt, insertAt);
+    } else {
+      sheet.getRange(insertAt, 1, 1, HEADERS_.length).clearFormat();
+    }
+    sheet.getRange(insertAt, 1, 1, HEADERS_.length).setValues([[
       new Date(), reference, name, studentId, email, phone, guests, total,
       method, txn, false, 'PENDING', '', '', '', ''
     ]]);
-    sheet.getRange(totalsRow, 11).insertCheckboxes();
-    // Rebuild formula ranges so the newly inserted student is included.
+    sheet.getRange(insertAt, 11).insertCheckboxes();
     updateRegistrationTotals_(sheet, totalsRow + 1);
     SpreadsheetApp.flush();
     return {reference:reference, amount:total, status:'PENDING'};
