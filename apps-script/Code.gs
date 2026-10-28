@@ -14,7 +14,7 @@ function onOpen() {
 // Google Sheets → Extensions → Apps Script. Paste as Code.gs.
 // Bind this script to the Google Sheet that will be your private admin dashboard.
 const SHEET_NAME_ = 'Registrations';
-const DEADLINE_ = '2026-10-27';
+const DEADLINE_ = '2026-10-29';
 const ZONE_ = 'Asia/Dhaka';
 // Exact public, working DIIT Workspace web-app deployment. Keep this synced with docs/config.js.
 const TICKET_VERIFICATION_BASE_URL_ = 'https://script.google.com/a/macros/diit.edu.bd/s/AKfycbz8G1aheVeGIxKzsxIMXl783fUMAG-7TZ_XW2pFvoprh6BYJYj_xIl59_B5vPDbFqWB9A/exec';
@@ -206,7 +206,7 @@ function doGet(e) {
 
 // This is the only mutation that public registration visitors may call.
 function submitRegistration(form) {
-  if (nowDate_() > DEADLINE_) throw Error('Registration closed on 27 October 2026.');
+  if (nowDate_() > DEADLINE_) throw Error('Registration closed on 29 October 2026.');
   form = form || {};
   const name = clean_(form.name), studentId = clean_(form.studentId),
     email = clean_(form.email).toLowerCase(),
